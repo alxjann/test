@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Playtopia Proxy</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Playtopia Proxy</div>
+    <div class="status" id="status" data-state="down">
+      <span class="dot"></span><span id="status-text">Backend: disconnected</span>
+    </div>
+    <span class="chip" id="proxy-addr" title="Point the system proxy here">proxy 127.0.0.1:8080</span>
+    <span class="chip chip-warn hidden" id="paused-chip">PAUSED: pass-through, no logging, no rules</span>
+    <div class="spacer"></div>
+    <button id="btn-restart" class="hidden">Restart backend</button>
+    <button id="btn-pause">Pause</button>
+    <button id="btn-cert">Certificate Setup</button>
+  </header>
+
+  <div id="banners"></div>
+
+  <main>
+    <section class="panel traffic" aria-label="Live traffic">
+      <div class="panel-head">
+        <h2>Live Traffic</h2>
+        <span class="muted" id="log-count">0 entries</span>
+      </div>
+      <div class="filter-bar">
+        <input id="filter-text" type="search" placeholder="Filter: path, event, topic, body…" spellcheck="false">
+        <div class="toggles" role="group" aria-label="Show entry types">
+          <button class="toggle on" data-kind="rest" aria-pressed="true">REST</button>
+          <button class="toggle on" data-kind="ws" aria-pressed="true">WS</button>
+          <button class="toggle on" data-kind="rule" aria-pressed="true">Rules</button>
+          <button class="toggle on" data-kind="error" aria-pressed="true">Errors</button>
+          <button class="toggle" data-kind="log" aria-pressed="false">Log</button>
+        </div>
+        <label class="check"><input type="checkbox" id="autoscroll" checked> Autoscroll</label>
+        <button id="btn-clear-log">Clear</button>
+      </div>
+      <div id="log" class="log" tabindex="0"></div>
+    </section>
+
+    <section class="panel rules" aria-label="Rules">
+      <div class="panel-head">
+        <h2>Rules</h2>
+        <div class="head-actions">
+          <button id="btn-add-rule" class="primary">Add Rule</button>
+          <button id="btn-clear-rules" class="danger">Clear All Rules</button>
+        </div>
+      </div>
+      <div id="sync-status" class="sync muted"></div>
+      <div id="rule-list" class="rule-list"></div>
+      <div id="rules-empty" class="empty">
+        <p>No rules yet.</p>
+        <p class="muted">Click a traffic entry and choose <b>Create rule from this</b>, or use <b>Add Rule</b>.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Add / edit rule -->
+  <dialog id="rule-modal">
+    <form id="rule-form" method="dialog" novalidate>
+      <h3 id="rule-modal-title">Add Rule</h3>
+
+      <div class="grid2">
+        <label><span>Rule ID <span class="muted">(optional)</span></span>
+          <input id="f-id" type="text" placeholder="auto" spellcheck="false">
+        </label>
+        <div>
+          <span class="label">Target</span>
+          <div class="radios">
+            <label><input type="radio" name="target" value="rest" checked> REST</label>
+            <label><input type="radio" name="target" value="ws"> WebSocket</label>
+          </div>
+        </div>
+      </div>
+
+      <fieldset>
+        <legend>Match <span class="muted">(all optional; empty = wildcard)</span></legend>
+        <div class="grid2">
+          <label class="only-rest">Method
+            <select id="f-method">
+              <option value="">any</option>
+              <option>GET</option><option>POST</option><option>PATCH</option><option>PUT</option><option>DELETE</option>
+            </select>
+          </label>
+          <label class="only-ws">Phoenix event
+            <input id="f-event" type="text" placeholder="e.g. broadcast, phx_reply" spellcheck="false">
+          </label>
+          <label>Direction
+            <select id="f-direction">
+              <option value="">both</option>
+              <option value="client">client (request / client→server)</option>
+              <option value="server">server (response / server→client)</option>
+            </select>
+          </label>
+          <label>Path contains
+            <input id="f-path" type="text" placeholder="/rest/v1/profiles" spellcheck="false">
+          </label>
+        </div>
+        <label>Body contains
+          <input id="f-contains" type="text" placeholder="substring that must appear in the body/frame" spellcheck="false">
+        </label>
+        <div id="wildcard-warning" class="warn-box hidden">Empty match: this rule is a <b>wildcard</b> and will be applied to every <span id="wildcard-target">REST</span> message.</div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Action</legend>
+        <label>Type
+          <select id="f-action">
+            <option value="replace_json_field">replace_json_field</option>
+            <option value="string_replace">string_replace</option>
+            <option value="drop" class="only-ws-opt">drop (WebSocket only)</option>
+          </select>
+        </label>
+        <div data-action="replace_json_field">
+          <label>JSON path
+            <input id="f-jpath" type="text" placeholder='*.display_name   or   ["payload","payload","message"]' spellcheck="false">
+          </label>
+          <p class="hint">Dot-separated keys or a JSON array. <code>*</code> = every array element / object value. Numbers index arrays. For WebSocket frames, start with <code>payload</code>; it works for both Phoenix v1 and v2.</p>
+          <label><span>New value <span class="muted">(JSON; anything that isn't valid JSON is used as a string)</span></span>
+            <textarea id="f-value" rows="2" spellcheck="false" placeholder='"Tester"   or   42   or   {"a":1}'></textarea>
+          </label>
+          <p class="hint" id="value-preview"></p>
+        </div>
+        <div data-action="string_replace" class="grid2">
+          <label>Find
+            <input id="f-from" type="text" spellcheck="false">
+          </label>
+          <label>Replace with
+            <input id="f-to" type="text" spellcheck="false">
+          </label>
+        </div>
+        <div data-action="drop">
+          <p class="hint">Matching WebSocket frames are discarded and never reach the other side.</p>
+        </div>
+      </fieldset>
+
+      <label class="check"><input type="checkbox" id="f-enabled" checked> Enabled</label>
+
+      <ul id="rule-errors" class="errors"></ul>
+
+      <div class="modal-actions">
+        <button type="button" id="rule-cancel">Cancel</button>
+        <button type="submit" class="primary" id="rule-save">Save rule</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Certificate / proxy setup -->
+  <dialog id="cert-modal">
+    <div class="cert">
+      <h3>Certificate &amp; Proxy Setup</h3>
+      <p class="muted">Both steps are needed. Without the certificate, HTTPS interception fails silently and the game shows connection errors. Without the proxy, no traffic reaches this app.</p>
+
+      <section>
+        <h4><span class="step-state" id="cert-state">…</span> 1. Trust the mitmproxy CA certificate</h4>
+        <p>File: <code id="cert-path">…</code></p>
+        <p>Run in an <b>elevated</b> (Administrator) terminal:</p>
+        <div class="cmd"><code id="cert-cmd">…</code><button data-copy="cert-cmd">Copy</button></div>
+        <div class="btn-row">
+          <button id="btn-install-cert" class="primary">Install now (admin prompt)</button>
+          <button id="btn-open-cert-folder">Open folder</button>
+        </div>
+        <p class="hint" id="cert-msg"></p>
+      </section>
+
+      <section>
+        <h4><span class="step-state" id="proxy-state">…</span> 2. Point the system proxy at <span id="proxy-addr-2">127.0.0.1:8080</span></h4>
+        <p>Current: <code id="proxy-current">…</code></p>
+        <div class="btn-row">
+          <button id="btn-proxy-on" class="primary">Enable system proxy</button>
+          <button id="btn-proxy-off">Disable / restore</button>
+        </div>
+        <p class="hint">Manual: Settings → Network &amp; Internet → Proxy → Manual proxy setup → Address <code>127.0.0.1</code>, Port <code>8080</code>. If this app changes the proxy, it restores your previous setting when it exits.</p>
+      </section>
+
+      <section>
+        <h4>3. Restart the game</h4>
+        <p class="hint">Fully close and reopen Playtopia after both steps are green. Red <b>TLS</b> errors in the log mean the certificate is still not trusted (or the client pins certificates).</p>
+      </section>
+
+      <section>
+        <h4>Remove later</h4>
+        <div class="cmd"><code id="uninstall-cmd">certutil -delstore root mitmproxy</code><button data-copy="uninstall-cmd">Copy</button></div>
+      </section>
+
+      <div class="modal-actions">
+        <button id="btn-recheck">Re-check</button>
+        <button id="cert-close" class="primary">Close</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://playtopia-proxy.local/rules_schema.json",
+  "title": "Playtopia Proxy rule",
+  "description": "A single traffic-modification rule. Rules are evaluated in insertion order; every enabled rule whose match conditions all hold is applied. Match fields that don't apply to the rule's target are ignored (e.g. 'method' on a ws rule, 'event' on a rest rule). A rule with an empty 'match' is a wildcard and applies to every message of its target.",
+  "type": "object",
+  "required": ["id", "target", "action"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique rule identifier. Setting a rule with an existing id replaces it."
+    },
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Disabled rules are kept but never applied."
+    },
+    "target": {
+      "type": "string",
+      "enum": ["rest", "ws"],
+      "description": "'rest' = Supabase REST/auth HTTP calls (/rest/v1, /auth/v1). 'ws' = Realtime WebSocket frames (/realtime/v1/websocket)."
+    },
+    "match": {
+      "type": "object",
+      "description": "Conditions; all present fields must match. All optional.",
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PATCH", "PUT", "DELETE"],
+          "description": "REST only. HTTP method."
+        },
+        "path_contains": {
+          "type": "string",
+          "description": "Substring of the request path including query string, e.g. '/rest/v1/profiles'. For ws rules this is the WebSocket URL path."
+        },
+        "event": {
+          "type": "string",
+          "description": "WS only. Exact Phoenix event name, e.g. 'phx_join', 'phx_reply', 'broadcast', 'postgres_changes', 'presence_diff'."
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["client", "server"],
+          "description": "'client' = sent by the game (REST request / client->server frame). 'server' = sent by Supabase (REST response / server->client frame). Omit to match both."
+        },
+        "contains": {
+          "type": "string",
+          "description": "Substring that must appear in the body / frame text (checked before modification)."
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "required": ["type"],
+      "description": "What to do with matching messages.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["replace_json_field", "string_replace", "drop"],
+          "description": "'replace_json_field' sets an existing JSON field. 'string_replace' replaces every occurrence of a substring. 'drop' discards the frame (ws only)."
+        },
+        "path": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": ["string", "integer"] },
+          "description": "replace_json_field: keys/indices from the JSON root. '*' matches every array element / object value. Only existing fields are replaced. For Phoenix v2 array frames, a leading 'payload' (or 'topic', 'event', 'ref', 'join_ref') is mapped to the right array index, so ['payload', ...] works for both v1 and v2."
+        },
+        "value": {
+          "description": "replace_json_field: the new value (any JSON type)."
+        },
+        "from": {
+          "type": "string",
+          "minLength": 1,
+          "description": "string_replace: text to find."
+        },
+        "to": {
+          "type": "string",
+          "description": "string_replace: replacement text."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "replace_json_field" } } },
+          "then": { "required": ["path", "value"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "string_replace" } } },
+          "then": { "required": ["from", "to"] }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "target": { "const": "rest" } } },
+      "then": {
+        "properties": {
+          "action": {
+            "properties": { "type": { "enum": ["replace_json_field", "string_replace"] } }
+          }
+        }
+      }
+    }
+  ],
+  "examples": [
+    {
+      "id": "rename-me",
+      "enabled": true,
+      "target": "rest",
+      "match": { "method": "GET", "path_contains": "/rest/v1/profiles", "direction": "server" },
+      "action": { "type": "replace_json_field", "path": ["*", "display_name"], "value": "Tester" }
+    },
+    {
+      "id": "chat-text",
+      "enabled": true,
+      "target": "ws",
+      "match": { "event": "broadcast", "direction": "server", "contains": "message" },
+      "action": { "type": "replace_json_field", "path": ["payload", "payload", "message"], "value": "intercepted!" }
+    },
+    {
+      "id": "swap-word",
+      "enabled": true,
+      "target": "ws",
+      "match": { "direction": "server" },
+      "action": { "type": "string_replace", "from": "hello", "to": "howdy" }
+    },
+    {
+      "id": "silence-presence",
+      "enabled": false,
+      "target": "ws",
+      "match": { "event": "presence_diff" },
+      "action": { "type": "drop" }
+    }
+  ]
+}

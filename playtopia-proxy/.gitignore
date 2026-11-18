@@ -1,0 +1,26 @@
+# Node / Electron
+frontend/node_modules/
+frontend/dist/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# PyInstaller
+backend/build/
+backend/dist/
+*.spec
+
+# Local rule files used with --rules
+*.rules.json
+
+# Tool caches
+.impeccable/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
